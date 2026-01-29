@@ -18,6 +18,7 @@ async def create_alarm(alarm:AlarmCreate):
      
     alarm_doc = {
         "alarm_id": str(uuid.uuid4()),
+        "event_id" : alarm.event_id,
         "phone_num": alarm.phone_num,
         "time": alarm.time,
         "label": alarm.label,
@@ -45,14 +46,14 @@ async def get_alarm(phone_num: str):
 
 
 #update alarm
-@router.put("/alarms/{alarm_id}" , tags=["Alarms"])
-async def update_alarm(alarm_id: str, alarm: AlarmUpdate, phone_num:str):
+@router.put("/alarms/{event_id}" , tags=["Alarms"])
+async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str):
     result = await alarm_collection.update_one(
-        {"alarm_id":alarm_id,"phone_num":phone_num},
+        {"event_id":event_id,"phone_num":phone_num},
         {
            "$set":{
                "time":alarm.time,
-               "label":alarm.label,
+               "label":alarm.label or "Not Defined",
                "enabled": alarm.enabled,
                "updated_at":datetime.now(timezone.utc)
            }
@@ -71,7 +72,7 @@ async def update_alarm(alarm_id: str, alarm: AlarmUpdate, phone_num:str):
 # toggle alarm
 @router.patch("/alarms/{alarm_id}" , tags=["Alarms"])
 async def toogle_alarm(alarm_id:str,phone_num:str):
-    alarm = await alarm_collection.find_one({"alarm_id":alarm_id,"phone_num":phone_num})
+    alarm = await alarm_collection.find_one({"event_id":alarm_id,"phone_num":phone_num})
 
     if not alarm:
         raise HTTPException(status_code=404, detail="Alarm not found")
@@ -79,7 +80,7 @@ async def toogle_alarm(alarm_id:str,phone_num:str):
     new_status = not alarm["enabled"]
 
     await alarm_collection.update_one(
-        {"alarm_id":alarm_id,"phone_num":phone_num},
+        {"event_id":alarm_id,"phone_num":phone_num},
         {"$set": {"enabled": new_status,
                   "updated_at": datetime.now(timezone.utc)
                   }}
@@ -94,7 +95,7 @@ async def toogle_alarm(alarm_id:str,phone_num:str):
 @router.delete("/alarms/{alarm_id}" , tags=["Alarms"])
 async def delete_alarm(alarm_id:str,phone_num:str):
     result = await alarm_collection.delete_one(
-        {"alarm_id":alarm_id,"phone_num":phone_num},
+        {"event_id":alarm_id,"phone_num":phone_num},
     )
 
     if result.deleted_count==0:

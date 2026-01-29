@@ -12,14 +12,16 @@ class LoginModel(BaseModel):
 
 class AlarmCreate(BaseModel):
     phone_num: str
-    time: datetime # Example - 2026-01-26T07:30:00
+    time: int # Example - 2026-01-26T07:30:00
     label: str
     enabled : bool = True
+    event_id : str
 
     
 
 class AlarmUpdate(BaseModel):
-    time: datetime
+    time: int
     label: str
     enabled: bool
+    event_id : str
 
