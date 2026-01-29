@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import user, alarm
+from routers import user, alarm,auth
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -14,6 +14,7 @@ app.add_middleware(
 )
 app.include_router(user.router)
 app.include_router(alarm.router)
+app.include_router(auth.router)
 
 # fastapi health check
 @app.get("/",tags=["Health-Check"])
