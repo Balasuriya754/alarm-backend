@@ -48,6 +48,8 @@ async def get_alarm(phone_num: str):
 #update alarm
 @router.put("/alarms/{event_id}" , tags=["Alarms"])
 async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str):
+    
+    
     result = await alarm_collection.update_one(
         {"event_id":event_id,"phone_num":phone_num},
         {
@@ -55,6 +57,7 @@ async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str):
                "time":alarm.time,
                "label":alarm.label or "Not Defined",
                "enabled": alarm.enabled,
+               "event_id":alarm.event_id,
                "updated_at":datetime.now(timezone.utc)
            }
             }
