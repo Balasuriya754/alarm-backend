@@ -25,3 +25,10 @@ class AlarmUpdate(BaseModel):
     enabled: bool
     event_id : str
 
+class SendOTPRequest(BaseModel):
+    phone_num:str
+
+
+class VerifyOTPRequest(BaseModel):
+    phone_num:str
+    otp:str

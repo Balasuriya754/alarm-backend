@@ -11,3 +11,4 @@ client = AsyncIOMotorClient(MONGO_URI)
 db = client["alarm_app"] 
 user_collection = db["users"]
 alarm_collection = db["alarms"]
+otp_collection = db["otp_requests"]

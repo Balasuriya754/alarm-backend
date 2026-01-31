@@ -1,126 +1,113 @@
 from fastapi import APIRouter, HTTPException
-import http.client
-import os
-from db import user_collection
-from datetime import timezone, datetime
+from utils.otp_utils import generate_otp, verify_otp,hash_otp
+from services.sns_service import send_sms
+from models.models import SendOTPRequest, VerifyOTPRequest
+from db import user_collection, otp_collection
+from datetime import timezone, datetime,timedelta
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+MAX_RESENDS =3
+RESEND_WINDOW = timedelta(hours = 1)
 
 @router.post("/send-otp")
-async def send_otp(phone_num:str):
-    auth_key = os.getenv("MSG91_AUTH_KEY")
-    
+async def send_otp(payload: SendOTPRequest):
+    now = datetime.now(timezone.utc)
 
-    if not auth_key :
-        raise HTTPException(status_code=500, detail= "Missing MSG91 Config")
-    
-    mobile = f"91{phone_num}"
-
-    conn = http.client.HTTPSConnection("control.msg91.com")
-
-    url = (
-          f"/api/v5/otp?"
-        f"authkey={auth_key}"
-        f"&mobile={mobile}"
-
-        f"&otp_length=4"
-        
+    record = await otp_collection.find_one(
+        {"phone_num": payload.phone_num}
     )
 
-    headers = { "Content-Type":"application/json"}
+    resend_count = 0
+    window_start = now
 
-    try:
-        conn.request("POST",url, headers=headers)
-        res = conn.getresponse()
-        data = res.read().decode("utf-8")
-    except Exception:
-        raise HTTPException(status_code=500, detail = "Failed to connect to MSG91")
-    
+    if record:
+        resend_count = record.get("resend_count", 0)
+        window_start = record.get("resend_window_start", now)
 
-    if res.status != 200:
-        raise HTTPException(status_code=500, detail="Failed to send OTP")
+        if window_start.tzinfo is None:
+            window_start= window_start.replace(tzinfo = timezone.utc)
+
+        
+        if now - window_start > RESEND_WINDOW:
+            resend_count = 0
+            window_start = now
+
+        
+        if resend_count >= MAX_RESENDS:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many OTP requests. Please try again later."
+            )
+
+
+    otp = generate_otp()
+
     
-    return {
-        "message":"OTP sent successfully",
-        "phone_num":phone_num
-    }
+    await otp_collection.update_one(
+        {"phone_num": payload.phone_num},
+        {
+            "$set": {
+                "otp_hash": hash_otp(otp),
+                "expires_at": now + timedelta(minutes=5),
+                "attempts_left": 3,
+                "resend_window_start": window_start,
+                "created_at": now
+            },
+            "$inc": {
+                "resend_count": 1
+            }
+        },
+        upsert=True
+    )
+
+    
+    send_sms(
+        f"+91{payload.phone_num}",
+        f"Your Alarm App OTP is {otp}. Valid for 5 minutes."
+    )
+
+    return {"message": "OTP sent successfully"}
+
+
+
+ 
 
 @router.post("/verify-otp")
-async def verify_otp(phone_num:str, otp:str):
-    auth_key = os.getenv("MSG91_AUTH_KEY")
+async def verify_user_otp(payload:VerifyOTPRequest):
+    record = await otp_collection.find_one({"phone_num":payload.phone_num})
 
-    if not auth_key:
-        raise HTTPException(status_code=500 , detail="MSG91 auth key is missing")
+    if not record:
+        raise HTTPException(400 , "OTP not found")
     
-    mobile = f"91{phone_num}"
+    expires_at = record["expires_at"]
 
-    conn = http.client.HTTPSConnection("control.msg91.com")
-
-    url= (
-         f"/api/v5/otp/verify?"
-        f"authkey={auth_key}"
-        f"&mobile={mobile}"
-        f"&otp={otp}"
-    )
-
-    try:
-        conn.request("GET",url)
-        res = conn.getresponse()
-        data = res.read().decode("utf-8")
-
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to connect to MSG91")
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     
-    if res.status != 200:
-        raise HTTPException(status_code=401, detail = "Invalid or expired OTP")
+    if datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=400 , detail="OTP expired")
     
-    user = await user_collection.find_one({"phone_num":phone_num})
-
+    if record["attempts_left"]<=0:
+        raise HTTPException(status_code=400, detail="OTP Attempts exceeded")
+    
+    if not verify_otp(payload.otp, record["otp_hash"]):
+        await otp_collection.update_one(
+            
+                {"phone_num":payload.phone_num},
+                {"$inc":{"attempts_left":-1}
+            }
+        )
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    user = await user_collection.find_one({"phone_num":payload.phone_num})
     if not user:
         await user_collection.insert_one({
-            "phone_num": phone_num,
-            "created_at": datetime.now(timezone.utc)
-
+            "phone_num": payload.phone_num,
+            "created_at":datetime.now(timezone.utc)
         })
-    return {
-            "message": "OTP Verified successfully",
-            "phone_num": phone_num
-        }
-    
-@router.post("/resend-otp")
-async def resend_otp(phone_num:str):
 
-    auth_key = os.getenv("MSG91_AUTH_KEY")
+    await otp_collection.delete_one({"phone_num":payload.phone_num})
 
-    if not auth_key:
-        raise HTTPException(status_code=500 , detail="MSG91 auth key is missing")
-    
-    mobile = f"91{phone_num}"
+    return {"message": "OTP verified successfully"}
 
-    conn = http.client.HTTPSConnection("control.msg91.com")
-
-    url = (
-         f"/api/v5/otp/retry?"
-        f"authkey={auth_key}"
-        f"&mobile={mobile}"
-        f"&retrytype=text"
-    )
-
-    try:
-        conn.request("GET", url)
-        res = conn.getresponse()
-        data = res.read().decode("utf-8")
-    except Exception:
-        raise HTTPException(
-            status_code= 500,detail="Failed to connect to MSG91"
-
-        )
-    
-    if res.status != 200:
-        raise HTTPException(status_code=400, detail= "Failed to resend OTP")
-
-    return {
-        "message": "OTP resend successfully",
-        "phone_num":phone_num
-    }
