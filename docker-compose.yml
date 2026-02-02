@@ -10,18 +10,34 @@ services:
       - .env
     depends_on:
       - mongo
+      - redis
+    environment:
+      MONGO_URI: mongodb://mongo:27017/alarm_db
+      REDIS_HOST: redis
     volumes:
-      - .:/alarm_backend
+      - .:/app
     restart: always
+    networks:
+      - alarm-net
 
   mongo:
     image: mongo:7.0
     container_name: alarm-mongo
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: always
+    networks:
+      - alarm-net
+
+  redis:
+    image: redis:7
+    container_name: alarm-redis
+    restart: always
+    networks:
+      - alarm-net
 
 volumes:
   mongo_data:
+
+networks:
+  alarm-net:

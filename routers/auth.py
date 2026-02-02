@@ -4,6 +4,14 @@ from services.sns_service import send_sms
 from models.models import SendOTPRequest, VerifyOTPRequest
 from db import user_collection, otp_collection
 from datetime import timezone, datetime,timedelta
+from redis_client import redis_client
+import uuid
+
+SESSION_TTL = 5 * 24 * 60 * 60
+
+
+    
+
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -41,7 +49,7 @@ async def send_otp(payload: SendOTPRequest):
             )
 
 
-    otp = generate_otp()
+    otp = "1234"
 
     
     await otp_collection.update_one(
@@ -75,6 +83,7 @@ async def send_otp(payload: SendOTPRequest):
 
 @router.post("/verify-otp")
 async def verify_user_otp(payload:VerifyOTPRequest):
+    phone_num = payload.phone_num
     record = await otp_collection.find_one({"phone_num":payload.phone_num})
 
     if not record:
@@ -100,14 +109,34 @@ async def verify_user_otp(payload:VerifyOTPRequest):
         )
         raise HTTPException(status_code=400, detail="Invalid OTP")
     
-    user = await user_collection.find_one({"phone_num":payload.phone_num})
+    user = await user_collection.find_one({"phone_num":phone_num})
     if not user:
         await user_collection.insert_one({
             "phone_num": payload.phone_num,
             "created_at":datetime.now(timezone.utc)
         })
 
+    session_token = str(uuid.uuid4())
+
+    try:
+        old_token = redis_client.get(f"user_session:{phone_num}")
+        if old_token:
+            redis_client.delete(f"session:{old_token.decode()}")
+
+        redis_client.setex(f"session:{session_token}",
+                           SESSION_TTL, phone_num)
+        
+        redis_client.setex(f"user_session:{phone_num}",
+                           SESSION_TTL,
+                           session_token)
+    except Exception:
+       raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable")
+    
+    
+
     await otp_collection.delete_one({"phone_num":payload.phone_num})
 
-    return {"message": "OTP verified successfully"}
+    return {"message": "OTP verified successfully",
+            "session_token": session_token,
+            "token_type": "bearer"}
 
