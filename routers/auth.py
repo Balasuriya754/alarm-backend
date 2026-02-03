@@ -108,29 +108,44 @@ async def verify_user_otp(payload: VerifyOTPRequest):
     if record["attempts_left"] <= 0:
         raise HTTPException(400, "OTP attempts exceeded")
 
-    #if not verify_otp(payload.otp, record["otp_hash"]):
+     #if not verify_otp(payload.otp, record["otp_hash"]):
     if payload.otp != record["otp"]:
         await otp_collection.update_one(
             {"phone_num": phone_num},
             {"$inc": {"attempts_left": -1}}
         )
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-    
-    user = await user_collection.find_one({"phone_num":phone_num})
-    if flow == 'register':
+        raise HTTPException(400, "Invalid OTP")
+
+    user = await user_collection.find_one({"phone_num": phone_num})
+
+    #  LOGIN
+    if payload.flow == "login":
         if not user:
-            await user_collection.insert_one({
-                "phone_num": payload.phone_num,
-                "created_at":datetime.now(timezone.utc)
-            })
-        else:
-            raise HTTPException(status_code=400,detail="User already registered")
-    
-    if flow == "login":
-        if not user:
-            raise HTTPException(status_code=400,detail="User not registered")
-        else:
-            pass
+            raise HTTPException(
+                status_code=403,
+                detail="User not registered. Please register first."
+            )
+
+    #  REGISTER 
+    if payload.flow == "register":
+        if user:
+            raise HTTPException(
+                status_code=409,
+                detail="User already registered. Please login."
+            )
+
+        if not payload.username:
+            raise HTTPException(
+                status_code=422,
+                detail="Username is required for registration"
+            )
+
+        #  CREATE USER WITH USERNAME
+        await user_collection.insert_one({
+            "phone_num": phone_num,
+            "username": payload.username,
+            "created_at": now
+        })
 
     # CREATE SESSION 
     session_token = str(uuid.uuid4())
