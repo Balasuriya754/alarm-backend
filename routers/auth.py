@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from utils.otp_utils import generate_otp, verify_otp,hash_otp
+from utils.otp_utils import generate_otp
 from services.sns_service import send_sms
 from models.models import SendOTPRequest, VerifyOTPRequest
 from db import user_collection, otp_collection
@@ -11,8 +11,6 @@ SESSION_TTL = 5 * 24 * 60 * 60
 
 
     
-
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 MAX_RESENDS =3
@@ -58,13 +56,13 @@ async def send_otp(payload: SendOTPRequest):
                 detail="Too many OTP requests. Please try again later."
             )
 
-    otp = "1234"
+    otp = generate_otp()
 
     await otp_collection.update_one(
         {"phone_num": payload.phone_num},
         {
             "$set": {
-                "otp_hash": hash_otp(otp),
+                "otp": otp, #hash_otp(otp)
                 "expires_at": now + timedelta(minutes=5),
                 "attempts_left": 3,
                 "resend_window_start": window_start,
@@ -100,12 +98,14 @@ async def verify_user_otp(payload: VerifyOTPRequest):
         expires_at = expires_at.replace(tzinfo = timezone.utc)
 
     if now > expires_at:
+        await otp_collection.delete_one({"phone_num": phone_num})
         raise HTTPException(400, "OTP expired")
     
     if record["attempts_left"] <= 0:
         raise HTTPException(400, "OTP attempts exceeded")
 
-    if not verify_otp(payload.otp, record["otp_hash"]):
+    #if not verify_otp(payload.otp, record["otp_hash"]):
+    if payload.otp != record["otp"]:
         await otp_collection.update_one(
             {"phone_num": phone_num},
             {"$inc": {"attempts_left": -1}}

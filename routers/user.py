@@ -49,31 +49,20 @@ async def get_my_profile(phone_num: str = Depends(verify_session)):
 
     return user
 
-
-#delete user complete account
-@router.delete("/me")
-async def delete_my_account(
-    phone_num: str = Depends(verify_session)
-):
-    user = await user_collection.find_one({"phone_num": phone_num})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    
-    await user_collection.delete_one({"phone_num": phone_num})
-
-    await alarm_collection.delete_many({"phone_num": phone_num})
-
-    
-    await otp_collection.delete_many({"phone_num": phone_num})
+@router.delete("/logout")
+async def logout_my_account(
+    phone_num: str = Depends(verify_session)):
 
     token = redis_client.get(f"user_session:{phone_num}")
     if token:
-        redis_client.delete(f"session:{token.decode()}")
+        if isinstance(token, bytes):
+            token = token.decode()
+        redis_client.delete(f"session:{token}")
+
     redis_client.delete(f"user_session:{phone_num}")
 
     return {
-        "message": "User account deleted successfully"
+        "message": "User Logged Out Successfully"
     }
 
 
