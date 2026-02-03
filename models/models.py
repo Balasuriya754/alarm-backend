@@ -21,8 +21,10 @@ class AlarmUpdate(BaseModel):
 
 class SendOTPRequest(BaseModel):
     phone_num:str
+    flow:str
 
 
 class VerifyOTPRequest(BaseModel):
     phone_num:str
     otp:str
+    flow:str
