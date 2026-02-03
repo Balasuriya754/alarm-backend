@@ -17,7 +17,7 @@ class AlarmUpdate(BaseModel):
     time: int
     label: str
     enabled: bool
-   # event_id : str
+    event_id : str
 
 class SendOTPRequest(BaseModel):
     phone_num:str
