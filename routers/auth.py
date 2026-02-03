@@ -159,8 +159,3 @@ async def verify_user_otp(payload: VerifyOTPRequest):
             "session_token": session_token,
             "token_type": "Bearer"}
 
-    return {
-        "message": "OTP verified successfully",
-        "session_token": session_token,
-        "token_type": "Bearer"
-    }
