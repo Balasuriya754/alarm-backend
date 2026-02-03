@@ -1,17 +1,18 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from models.models import AlarmCreate, AlarmUpdate
 from db import alarm_collection, user_collection
 from datetime import datetime, timezone
 import uuid
+from utils.auth_utils import verify_session
 
 
-router = APIRouter()
+router = APIRouter(tags=["Alarms"])
 
 
 # create alarm
-@router.post("/alarms" , tags=["Alarms"])
-async def create_alarm(alarm:AlarmCreate):
-    user =  await user_collection.find_one({"phone_num":alarm.phone_num})
+@router.post("/alarms")
+async def create_alarm(alarm:AlarmCreate,phone_num:str = Depends(verify_session)):
+    user =  await user_collection.find_one({"phone_num":phone_num})
     if not user:
         raise HTTPException(status_code=404, detail="user not found!")
 
@@ -19,7 +20,7 @@ async def create_alarm(alarm:AlarmCreate):
     alarm_doc = {
         "alarm_id": str(uuid.uuid4()),
         "event_id" : alarm.event_id,
-        "phone_num": alarm.phone_num,
+        "phone_num": phone_num, ##
         "time": alarm.time,
         "label": alarm.label,
         "created_at": datetime.now(timezone.utc),
@@ -35,8 +36,8 @@ async def create_alarm(alarm:AlarmCreate):
     }
 
 # get alarms
-@router.get("/alarms" , tags=["Alarms"])
-async def get_alarm(phone_num: str):
+@router.get("/alarms")
+async def get_alarm(phone_num: str = Depends(verify_session)):
     alarms = []
     async for alarm in alarm_collection.find({"phone_num":phone_num},{"_id":0}):
         
@@ -46,8 +47,8 @@ async def get_alarm(phone_num: str):
 
 
 #update alarm
-@router.put("/alarms/{event_id}" , tags=["Alarms"])
-async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str):
+@router.put("/alarms/{event_id}" )
+async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str = Depends(verify_session)):
     
     
     result = await alarm_collection.update_one(
@@ -73,9 +74,9 @@ async def update_alarm(event_id: str, alarm: AlarmUpdate, phone_num:str):
     }
 
 # toggle alarm
-@router.patch("/alarms/{alarm_id}" , tags=["Alarms"])
-async def toogle_alarm(alarm_id:str,phone_num:str):
-    alarm = await alarm_collection.find_one({"event_id":alarm_id,"phone_num":phone_num})
+@router.patch("/alarms/{event_id}")
+async def toogle_alarm(event_id:str,phone_num:str = Depends(verify_session)):
+    alarm = await alarm_collection.find_one({"event_id":event_id,"phone_num":phone_num})
 
     if not alarm:
         raise HTTPException(status_code=404, detail="Alarm not found")
@@ -83,22 +84,22 @@ async def toogle_alarm(alarm_id:str,phone_num:str):
     new_status = not alarm["enabled"]
 
     await alarm_collection.update_one(
-        {"event_id":alarm_id,"phone_num":phone_num},
+        {"event_id":event_id,"phone_num":phone_num},
         {"$set": {"enabled": new_status,
                   "updated_at": datetime.now(timezone.utc)
                   }}
     )
 
     return {
-        "alarm_id": alarm_id,
+        "event_id": event_id,
         "enabled": new_status
     }
 
 #delete alarm
-@router.delete("/alarms/{alarm_id}" , tags=["Alarms"])
-async def delete_alarm(alarm_id:str,phone_num:str):
+@router.delete("/alarms/{event_id}")
+async def delete_alarm(event_id:str,phone_num:str = Depends(verify_session)):
     result = await alarm_collection.delete_one(
-        {"event_id":alarm_id,"phone_num":phone_num},
+        {"event_id":event_id,"phone_num":phone_num},
     )
 
     if result.deleted_count==0:
