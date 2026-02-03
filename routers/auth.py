@@ -28,6 +28,8 @@ async def send_otp(payload: SendOTPRequest):
 
     resend_count = 0
     window_start = now
+    
+    flow=payload.flow
 
     if record:
         resend_count = record.get("resend_count", 0)
@@ -48,6 +50,20 @@ async def send_otp(payload: SendOTPRequest):
                 detail="Too many OTP requests. Please try again later."
             )
 
+
+
+    user = await user_collection.find_one({"phone_num":payload.phone_num})
+    if flow == 'register':
+        if not user:
+           pass
+        else:
+            raise HTTPException(status_code=400,detail="User already registered")
+    
+    if flow == "login":
+        if not user:
+            raise HTTPException(status_code=400,detail="User not registered")
+        else:
+            pass
 
     otp = "1234"
 
@@ -84,6 +100,7 @@ async def send_otp(payload: SendOTPRequest):
 @router.post("/verify-otp")
 async def verify_user_otp(payload:VerifyOTPRequest):
     phone_num = payload.phone_num
+    flow=payload.flow
     record = await otp_collection.find_one({"phone_num":payload.phone_num})
 
     if not record:
@@ -110,18 +127,27 @@ async def verify_user_otp(payload:VerifyOTPRequest):
         raise HTTPException(status_code=400, detail="Invalid OTP")
     
     user = await user_collection.find_one({"phone_num":phone_num})
-    if not user:
-        await user_collection.insert_one({
-            "phone_num": payload.phone_num,
-            "created_at":datetime.now(timezone.utc)
-        })
+    if flow == 'register':
+        if not user:
+            await user_collection.insert_one({
+                "phone_num": payload.phone_num,
+                "created_at":datetime.now(timezone.utc)
+            })
+        else:
+            raise HTTPException(status_code=400,detail="User already registered")
+    
+    if flow == "login":
+        if not user:
+            raise HTTPException(status_code=400,detail="User not registered")
+        else:
+            pass
 
     session_token = str(uuid.uuid4())
 
     try:
         old_token = redis_client.get(f"user_session:{phone_num}")
         if old_token:
-            redis_client.delete(f"session:{old_token.decode()}")
+            redis_client.delete(f"session:{old_token}")
 
         redis_client.setex(f"session:{session_token}",
                            SESSION_TTL, phone_num)
@@ -129,8 +155,9 @@ async def verify_user_otp(payload:VerifyOTPRequest):
         redis_client.setex(f"user_session:{phone_num}",
                            SESSION_TTL,
                            session_token)
-    except Exception:
-       raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable")
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable auth")
     
     
 
@@ -138,5 +165,5 @@ async def verify_user_otp(payload:VerifyOTPRequest):
 
     return {"message": "OTP verified successfully",
             "session_token": session_token,
-            "token_type": "bearer"}
+            "token_type": "Bearer"}
 
