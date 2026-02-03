@@ -22,10 +22,23 @@ RESEND_WINDOW = timedelta(hours = 1)
 async def send_otp(payload: SendOTPRequest):
     now = datetime.now(timezone.utc)
 
-    record = await otp_collection.find_one(
-        {"phone_num": payload.phone_num}
-    )
+    
+    user = await user_collection.find_one({"phone_num": payload.phone_num})
 
+    if payload.flow == "register" and user:
+        raise HTTPException(
+            status_code=409,
+            detail="User already registered. Please login."
+        )
+
+    if payload.flow == "login" and not user:
+        raise HTTPException(
+            status_code=403,
+            detail="User not registered. Please register first."
+        )
+
+    
+    record = await otp_collection.find_one({"phone_num": payload.phone_num})
     resend_count = 0
     window_start = now
     
@@ -34,16 +47,13 @@ async def send_otp(payload: SendOTPRequest):
     if record:
         resend_count = record.get("resend_count", 0)
         window_start = record.get("resend_window_start", now)
-
         if window_start.tzinfo is None:
-            window_start= window_start.replace(tzinfo = timezone.utc)
+            window_start = window_start.replace(tzinfo=timezone.utc)
 
-        
         if now - window_start > RESEND_WINDOW:
             resend_count = 0
             window_start = now
 
-        
         if resend_count >= MAX_RESENDS:
             raise HTTPException(
                 status_code=429,
@@ -67,7 +77,6 @@ async def send_otp(payload: SendOTPRequest):
 
     otp = "1234"
 
-    
     await otp_collection.update_one(
         {"phone_num": payload.phone_num},
         {
@@ -78,14 +87,11 @@ async def send_otp(payload: SendOTPRequest):
                 "resend_window_start": window_start,
                 "created_at": now
             },
-            "$inc": {
-                "resend_count": 1
-            }
+            "$inc": {"resend_count": 1}
         },
         upsert=True
     )
 
-    
     send_sms(
         f"+91{payload.phone_num}",
         f"Your Alarm App OTP is {otp}. Valid for 5 minutes."
@@ -94,35 +100,34 @@ async def send_otp(payload: SendOTPRequest):
     return {"message": "OTP sent successfully"}
 
 
-
  
 
 @router.post("/verify-otp")
-async def verify_user_otp(payload:VerifyOTPRequest):
+async def verify_user_otp(payload: VerifyOTPRequest):
+    now = datetime.now(timezone.utc)
     phone_num = payload.phone_num
     flow=payload.flow
     record = await otp_collection.find_one({"phone_num":payload.phone_num})
 
+    record = await otp_collection.find_one({"phone_num": phone_num})
     if not record:
-        raise HTTPException(400 , "OTP not found")
+        raise HTTPException(400, "OTP not found")
     
     expires_at = record["expires_at"]
 
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo = timezone.utc)
+
+    if now > expires_at:
+        raise HTTPException(400, "OTP expired")
     
-    if datetime.now(timezone.utc) > expires_at:
-        raise HTTPException(status_code=400 , detail="OTP expired")
-    
-    if record["attempts_left"]<=0:
-        raise HTTPException(status_code=400, detail="OTP Attempts exceeded")
-    
+    if record["attempts_left"] <= 0:
+        raise HTTPException(400, "OTP attempts exceeded")
+
     if not verify_otp(payload.otp, record["otp_hash"]):
         await otp_collection.update_one(
-            
-                {"phone_num":payload.phone_num},
-                {"$inc":{"attempts_left":-1}
-            }
+            {"phone_num": phone_num},
+            {"$inc": {"attempts_left": -1}}
         )
         raise HTTPException(status_code=400, detail="Invalid OTP")
     
@@ -142,6 +147,7 @@ async def verify_user_otp(payload:VerifyOTPRequest):
         else:
             pass
 
+    # CREATE SESSION 
     session_token = str(uuid.uuid4())
 
     try:
@@ -161,9 +167,15 @@ async def verify_user_otp(payload:VerifyOTPRequest):
     
     
 
-    await otp_collection.delete_one({"phone_num":payload.phone_num})
+    redis_client.setex(f"session:{session_token}", SESSION_TTL, phone_num)
+    redis_client.setex(f"user_session:{phone_num}", SESSION_TTL, session_token)
 
     return {"message": "OTP verified successfully",
             "session_token": session_token,
             "token_type": "Bearer"}
 
+    return {
+        "message": "OTP verified successfully",
+        "session_token": session_token,
+        "token_type": "Bearer"
+    }
