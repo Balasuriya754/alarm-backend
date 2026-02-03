@@ -39,6 +39,8 @@ async def send_otp(payload: SendOTPRequest):
     record = await otp_collection.find_one({"phone_num": payload.phone_num})
     resend_count = 0
     window_start = now
+    
+    flow=payload.flow
 
     if record:
         resend_count = record.get("resend_count", 0)
@@ -87,6 +89,8 @@ async def send_otp(payload: SendOTPRequest):
 async def verify_user_otp(payload: VerifyOTPRequest):
     now = datetime.now(timezone.utc)
     phone_num = payload.phone_num
+    flow=payload.flow
+    record = await otp_collection.find_one({"phone_num":payload.phone_num})
 
     record = await otp_collection.find_one({"phone_num": phone_num})
     if not record:
@@ -110,50 +114,50 @@ async def verify_user_otp(payload: VerifyOTPRequest):
             {"phone_num": phone_num},
             {"$inc": {"attempts_left": -1}}
         )
-        raise HTTPException(400, "Invalid OTP")
-
-    user = await user_collection.find_one({"phone_num": phone_num})
-
-    #  LOGIN
-    if payload.flow == "login":
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    user = await user_collection.find_one({"phone_num":phone_num})
+    if flow == 'register':
         if not user:
-            raise HTTPException(
-                status_code=403,
-                detail="User not registered. Please register first."
-            )
-
-    #  REGISTER 
-    if payload.flow == "register":
-        if user:
-            raise HTTPException(
-                status_code=409,
-                detail="User already registered. Please login."
-            )
-
-        if not payload.username:
-            raise HTTPException(
-                status_code=422,
-                detail="Username is required for registration"
-            )
-
-        #  CREATE USER WITH USERNAME
-        await user_collection.insert_one({
-            "phone_num": phone_num,
-            "username": payload.username,
-            "created_at": now
-        })
+            await user_collection.insert_one({
+                "phone_num": payload.phone_num,
+                "created_at":datetime.now(timezone.utc)
+            })
+        else:
+            raise HTTPException(status_code=400,detail="User already registered")
+    
+    if flow == "login":
+        if not user:
+            raise HTTPException(status_code=400,detail="User not registered")
+        else:
+            pass
 
     # CREATE SESSION 
     session_token = str(uuid.uuid4())
 
-    old_token = redis_client.get(f"user_session:{phone_num}")
-    if old_token:
-        redis_client.delete(f"session:{old_token.decode()}")
+    try:
+        old_token = redis_client.get(f"user_session:{phone_num}")
+        if old_token:
+            redis_client.delete(f"session:{old_token}")
+
+        redis_client.setex(f"session:{session_token}",
+                           SESSION_TTL, phone_num)
+        
+        redis_client.setex(f"user_session:{phone_num}",
+                           SESSION_TTL,
+                           session_token)
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=503, detail="Authentication service is temporarily unavailable auth")
+    
+    
 
     redis_client.setex(f"session:{session_token}", SESSION_TTL, phone_num)
     redis_client.setex(f"user_session:{phone_num}", SESSION_TTL, session_token)
 
-    await otp_collection.delete_one({"phone_num": phone_num})
+    return {"message": "OTP verified successfully",
+            "session_token": session_token,
+            "token_type": "Bearer"}
 
     return {
         "message": "OTP verified successfully",
